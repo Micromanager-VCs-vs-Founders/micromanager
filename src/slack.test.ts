@@ -1,6 +1,9 @@
 import { createHmac } from 'node:crypto';
+import express from 'express';
+import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { verifySlackSignature } from './slack.js';
+import { slackRouter, verifySlackSignature } from './slack.js';
+import type { WebhookEvent } from './agent.js';
 
 const SECRET = 'test-signing-secret';
 
@@ -34,5 +37,73 @@ describe('verifySlackSignature', () => {
 
   it('rejects a malformed signature header', () => {
     expect(verifySlackSignature(SECRET, ts, 'garbage', body, now)).toBe(false);
+  });
+});
+
+function slackApp(dispatched: WebhookEvent[]) {
+  const app = express();
+  app.use(slackRouter({ signingSecret: SECRET, dispatch: (e) => dispatched.push(e) }));
+  return app;
+}
+
+function slackHeaders(body: string) {
+  const ts = String(Math.floor(Date.now() / 1000));
+  return { 'x-slack-request-timestamp': ts, 'x-slack-signature': sign(ts, body) };
+}
+
+describe('slackRouter', () => {
+  it('rejects an unsigned request with 401 and dispatches nothing', async () => {
+    const dispatched: WebhookEvent[] = [];
+    await request(slackApp(dispatched))
+      .post('/webhooks/slack')
+      .set('content-type', 'application/json')
+      .send('{"type":"event_callback"}')
+      .expect(401);
+    expect(dispatched).toEqual([]);
+  });
+
+  it('answers the url_verification challenge', async () => {
+    const dispatched: WebhookEvent[] = [];
+    const body = JSON.stringify({ type: 'url_verification', challenge: 'abc123' });
+    const res = await request(slackApp(dispatched))
+      .post('/webhooks/slack')
+      .set(slackHeaders(body))
+      .set('content-type', 'application/json')
+      .send(body)
+      .expect(200);
+    expect(res.body).toEqual({ challenge: 'abc123' });
+    expect(dispatched).toEqual([]);
+  });
+
+  it('acks and dispatches a valid event_callback', async () => {
+    const dispatched: WebhookEvent[] = [];
+    const body = JSON.stringify({
+      type: 'event_callback',
+      event: { type: 'app_mention', user: 'U1', text: 'hi' },
+    });
+    await request(slackApp(dispatched))
+      .post('/webhooks/slack')
+      .set(slackHeaders(body))
+      .set('content-type', 'application/json')
+      .send(body)
+      .expect(200);
+    expect(dispatched).toEqual([
+      { source: 'slack', name: 'app_mention', payload: { type: 'app_mention', user: 'U1', text: 'hi' } },
+    ]);
+  });
+
+  it('does not dispatch bot-authored events (self-trigger guard)', async () => {
+    const dispatched: WebhookEvent[] = [];
+    const body = JSON.stringify({
+      type: 'event_callback',
+      event: { type: 'message', bot_id: 'B99', text: 'I am a bot' },
+    });
+    await request(slackApp(dispatched))
+      .post('/webhooks/slack')
+      .set(slackHeaders(body))
+      .set('content-type', 'application/json')
+      .send(body)
+      .expect(200);
+    expect(dispatched).toEqual([]);
   });
 });

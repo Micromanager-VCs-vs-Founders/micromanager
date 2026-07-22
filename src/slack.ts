@@ -1,7 +1,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import type { WebClient } from '@slack/web-api';
+import express, { Router } from 'express';
 import { z } from 'zod';
+import type { Dispatch } from './agent.js';
 
 const MAX_AGE_SECONDS = 300;
 
@@ -64,4 +66,31 @@ export function slackTools(client: WebClient) {
       },
     ),
   ];
+}
+
+export function slackRouter(opts: { signingSecret: string; dispatch: Dispatch }): Router {
+  const router = Router();
+  router.post('/webhooks/slack', express.raw({ type: '*/*' }), (req, res) => {
+    const rawBody = (req.body as Buffer).toString('utf8');
+    const timestamp = req.header('x-slack-request-timestamp') ?? '';
+    const signature = req.header('x-slack-signature') ?? '';
+    if (!verifySlackSignature(opts.signingSecret, timestamp, signature, rawBody)) {
+      res.status(401).send('bad signature');
+      return;
+    }
+
+    const payload = JSON.parse(rawBody);
+    if (payload.type === 'url_verification') {
+      res.json({ challenge: payload.challenge });
+      return;
+    }
+
+    res.sendStatus(200);
+    if (payload.type === 'event_callback' && payload.event) {
+      const event = payload.event;
+      if (event.bot_id || event.subtype === 'bot_message') return; // never react to bots (incl. ourselves)
+      opts.dispatch({ source: 'slack', name: event.type ?? 'unknown', payload: event });
+    }
+  });
+  return router;
 }

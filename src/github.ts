@@ -1,7 +1,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
+import express, { Router } from 'express';
 import type { Octokit } from 'octokit';
 import { z } from 'zod';
+import type { Dispatch } from './agent.js';
 
 export function verifyGithubSignature(
   secret: string,
@@ -41,4 +43,26 @@ export function githubReadMcpServer(token: string) {
     url: 'https://api.githubcopilot.com/mcp/',
     headers: { Authorization: `Bearer ${token}` },
   };
+}
+
+export function githubRouter(opts: { webhookSecret: string; dispatch: Dispatch }): Router {
+  const router = Router();
+  router.post('/webhooks/github', express.raw({ type: '*/*' }), (req, res) => {
+    const rawBody = (req.body as Buffer).toString('utf8');
+    const signature = req.header('x-hub-signature-256') ?? '';
+    if (!verifyGithubSignature(opts.webhookSecret, rawBody, signature)) {
+      res.status(401).send('bad signature');
+      return;
+    }
+
+    res.sendStatus(200);
+    const payload = JSON.parse(rawBody);
+    if (payload.sender?.type === 'Bot') return; // never react to bots (incl. our own comments)
+    opts.dispatch({
+      source: 'github',
+      name: req.header('x-github-event') ?? 'unknown',
+      payload,
+    });
+  });
+  return router;
 }
