@@ -19,7 +19,9 @@ behaviors; the prompt is where personality lives.
 - `octokit` — GitHub writes inside custom tools
 - Env config via `.env` (not committed): `ANTHROPIC_API_KEY`,
   `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `GITHUB_TOKEN`,
-  `GITHUB_WEBHOOK_SECRET`, `PORT`
+  `GITHUB_WEBHOOK_SECRET`, `PORT`; sweep config `SWEEP_INTERVAL_MINUTES`
+  (default 60, 0 disables), `GITHUB_REPOS` (optional), `SLACK_DEFAULT_CHANNEL`
+  (optional)
 
 ## Webhook layer
 
@@ -67,6 +69,20 @@ Single entrypoint `runAgent(event)` wrapping the SDK's `query()`:
 - System prompt: team micromanager persona; given a webhook event, decide
   whether action is warranted; act via tools or do nothing; be sparing.
 
+## Scheduled sweeps (added 2026-07-22, Henry)
+
+Besides webhooks, a third trigger: an in-process scheduler fires every
+`SWEEP_INTERVAL_MINUTES` (default 60; `0` disables) and dispatches a synthetic
+event (`source: 'schedule'`, `name: 'overdue_issue_sweep'`) through the same
+dispatcher → agent path. The sweep payload carries `GITHUB_REPOS`
+(comma-separated `owner/repo` list, optional) and `SLACK_DEFAULT_CHANNEL`
+(optional) from env so the agent knows where to look and where to nudge.
+What counts as "overdue" and what the kickstart is stays prompt-driven, like
+all other behavior: the system prompt directs sweep runs to find overdue/stale
+open issues in the named repos via GitHub read tools and nudge via Slack or
+issue comments. In-process interval, not a cron service: v1 runs as one
+persistent process on Render, and losing a tick on restart is acceptable.
+
 ## Layout
 
 Colocated by concept:
@@ -75,6 +91,7 @@ Colocated by concept:
 - `src/github.ts` — signature verification, webhook route, GitHub write tool,
   GitHub MCP server config
 - `src/agent.ts` — `runAgent()`, system prompt, tool/MCP assembly
+- `src/schedule.ts` — overdue-issue sweep scheduler
 - `src/server.ts` — Express app assembly, config loading
 
 ## Error handling

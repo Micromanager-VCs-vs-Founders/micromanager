@@ -1033,3 +1033,175 @@ Run: with a populated `.env`, `node --env-file=.env dist/server.js` — Expected
 git add render.yaml package.json
 git commit -m "feat: Render deployment blueprint"
 ```
+
+---
+
+### Task 9: Overdue-issue sweep scheduler
+
+**Files:**
+- Create: `src/schedule.ts`, `src/schedule.test.ts`
+- Modify: `src/agent.ts` (extend `WebhookEvent.source` union; extend `SYSTEM_PROMPT`)
+- Modify: `src/server.ts` (wire scheduler + new env vars)
+- Modify: `.env.example` (add `SWEEP_INTERVAL_MINUTES`, `GITHUB_REPOS`, `SLACK_DEFAULT_CHANNEL`)
+
+**Interfaces:**
+- Consumes: `Dispatch` from `src/agent.ts`.
+- Produces: `startSweepScheduler(opts: { intervalMinutes: number; dispatch: Dispatch; repos: string[]; slackChannel?: string }): () => void` from `src/schedule.ts` (returns a stop function). `WebhookEvent.source` becomes `'slack' | 'github' | 'schedule'`.
+
+- [ ] **Step 1: Extend WebhookEvent.source in src/agent.ts**
+
+Change the interface to:
+```typescript
+export interface WebhookEvent {
+  source: 'slack' | 'github' | 'schedule';
+  name: string;
+  payload: unknown;
+}
+```
+Run `npm run typecheck` + `npm test` — everything still green (widening the union breaks nothing).
+
+- [ ] **Step 2: Write the failing scheduler tests**
+
+`src/schedule.test.ts`:
+```typescript
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { WebhookEvent } from './agent.js';
+import { startSweepScheduler } from './schedule.js';
+
+describe('startSweepScheduler', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('dispatches a sweep event every interval with repos and channel in the payload', () => {
+    const dispatched: WebhookEvent[] = [];
+    startSweepScheduler({
+      intervalMinutes: 30,
+      dispatch: (e) => dispatched.push(e),
+      repos: ['acme/api', 'acme/web'],
+      slackChannel: 'C123',
+    });
+
+    expect(dispatched).toEqual([]); // nothing before the first interval elapses
+    vi.advanceTimersByTime(30 * 60 * 1000);
+    expect(dispatched).toEqual([
+      {
+        source: 'schedule',
+        name: 'overdue_issue_sweep',
+        payload: { repos: ['acme/api', 'acme/web'], slackChannel: 'C123' },
+      },
+    ]);
+    vi.advanceTimersByTime(30 * 60 * 1000);
+    expect(dispatched).toHaveLength(2);
+  });
+
+  it('does nothing when intervalMinutes is 0', () => {
+    const dispatched: WebhookEvent[] = [];
+    startSweepScheduler({ intervalMinutes: 0, dispatch: (e) => dispatched.push(e), repos: [] });
+    vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+    expect(dispatched).toEqual([]);
+  });
+
+  it('stops dispatching after the stop function is called', () => {
+    const dispatched: WebhookEvent[] = [];
+    const stop = startSweepScheduler({
+      intervalMinutes: 5,
+      dispatch: (e) => dispatched.push(e),
+      repos: [],
+    });
+    vi.advanceTimersByTime(5 * 60 * 1000);
+    expect(dispatched).toHaveLength(1);
+    stop();
+    vi.advanceTimersByTime(60 * 60 * 1000);
+    expect(dispatched).toHaveLength(1);
+  });
+});
+```
+
+- [ ] **Step 3: Run to verify failure**
+
+Run: `npx vitest run src/schedule.test.ts`
+Expected: FAIL — `Cannot find module './schedule.js'`.
+
+- [ ] **Step 4: Implement src/schedule.ts**
+
+```typescript
+import type { Dispatch } from './agent.js';
+
+export function startSweepScheduler(opts: {
+  intervalMinutes: number;
+  dispatch: Dispatch;
+  repos: string[];
+  slackChannel?: string;
+}): () => void {
+  if (opts.intervalMinutes <= 0) return () => {};
+
+  const timer = setInterval(
+    () => {
+      opts.dispatch({
+        source: 'schedule',
+        name: 'overdue_issue_sweep',
+        payload: { repos: opts.repos, slackChannel: opts.slackChannel },
+      });
+    },
+    opts.intervalMinutes * 60 * 1000,
+  );
+  timer.unref?.(); // never keep the process alive just for sweeps
+  return () => clearInterval(timer);
+}
+```
+
+- [ ] **Step 5: Run tests**
+
+Run: `npx vitest run src/schedule.test.ts` — Expected: 3 passed. Then `npm test` — all pass.
+
+- [ ] **Step 6: Extend SYSTEM_PROMPT in src/agent.ts**
+
+Append to the existing SYSTEM_PROMPT template literal (before the closing backtick):
+```
+On "overdue_issue_sweep" events: the payload names the repos to check (and
+optionally a Slack channel for nudges). Use your GitHub read tools to find
+open issues that look overdue or stalled — e.g. no activity for a week or
+more, past a stated due date or milestone, or blocking labels with no
+assignee movement. For the few most important ones, kickstart progress: nudge
+the assignee (issue comment) or post a short prioritized summary to the Slack
+channel. If nothing is overdue, do nothing.
+```
+
+- [ ] **Step 7: Wire into src/server.ts**
+
+Add to the config object:
+```typescript
+  sweepIntervalMinutes: Number(process.env.SWEEP_INTERVAL_MINUTES ?? 60),
+  githubRepos: (process.env.GITHUB_REPOS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+  slackDefaultChannel: process.env.SLACK_DEFAULT_CHANNEL || undefined,
+```
+After the `app.listen(...)` call add:
+```typescript
+startSweepScheduler({
+  intervalMinutes: config.sweepIntervalMinutes,
+  dispatch,
+  repos: config.githubRepos,
+  slackChannel: config.slackDefaultChannel,
+});
+```
+with `import { startSweepScheduler } from './schedule.js';` added to the imports.
+
+Append to `.env.example`:
+```
+SWEEP_INTERVAL_MINUTES=60
+GITHUB_REPOS=owner/repo,owner/other-repo
+SLACK_DEFAULT_CHANNEL=
+```
+
+- [ ] **Step 8: Verify and commit**
+
+Run: `npm run typecheck` (exit 0) and `npm test` (all pass).
+
+```bash
+git add src/schedule.ts src/schedule.test.ts src/agent.ts src/server.ts .env.example
+git commit -m "feat: scheduled overdue-issue sweeps"
+```
