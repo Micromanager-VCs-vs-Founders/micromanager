@@ -17,7 +17,8 @@ export function createDispatcher(
     while (inFlight < maxConcurrent && queue.length > 0) {
       const event = queue.shift()!;
       inFlight++;
-      run(event)
+      Promise.resolve()
+        .then(() => run(event)) // wrapper so a synchronously-throwing run is contained too
         .catch((err) => {
           console.error('agent run failed', { event, err });
         })

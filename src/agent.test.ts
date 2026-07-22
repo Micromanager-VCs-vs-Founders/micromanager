@@ -48,4 +48,20 @@ describe('createDispatcher', () => {
     await tick();
     expect(done).toEqual(['ok']);
   });
+
+  it('contains a run that throws synchronously and still drains the queue', async () => {
+    const done: string[] = [];
+    const dispatch = createDispatcher((e) => {
+      if (e.name === 'sync-boom') throw new Error('sync-boom');
+      return Promise.resolve().then(() => {
+        done.push(e.name);
+      });
+    }, 1);
+
+    expect(() => dispatch(event('sync-boom'))).not.toThrow();
+    dispatch(event('ok'));
+    await tick();
+    await tick();
+    expect(done).toEqual(['ok']);
+  });
 });
