@@ -5,7 +5,7 @@ import { githubReadMcpServer, githubWriteTools } from './github.js';
 import { slackTools } from './slack.js';
 
 export interface WebhookEvent {
-  source: 'slack' | 'github';
+  source: 'slack' | 'github' | 'schedule';
   name: string;
   payload: unknown;
 }
@@ -53,7 +53,15 @@ warrants action. You may look things up with your GitHub read tools and Slack
 read tools before acting. If action is warranted, act via slack post_message or
 github comment. Be sparing: most events need no response. Never respond to
 messages authored by bots (including yourself). When you act, be concise,
-specific, and constructive. If no action is needed, simply end the run.`;
+specific, and constructive. If no action is needed, simply end the run.
+
+On "overdue_issue_sweep" events: the payload names the repos to check (and
+optionally a Slack channel for nudges). Use your GitHub read tools to find
+open issues that look overdue or stalled — e.g. no activity for a week or
+more, past a stated due date or milestone, or blocking labels with no
+assignee movement. For the few most important ones, kickstart progress: nudge
+the assignee (issue comment) or post a short prioritized summary to the Slack
+channel. If nothing is overdue, do nothing.`;
 
 export async function runAgent(deps: AgentDeps, event: WebhookEvent): Promise<void> {
   const slackServer = createSdkMcpServer({

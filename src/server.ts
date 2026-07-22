@@ -4,6 +4,7 @@ import { WebClient } from '@slack/web-api';
 import { Octokit } from 'octokit';
 import { createDispatcher, runAgent, type AgentDeps } from './agent.js';
 import { githubRouter } from './github.js';
+import { startSweepScheduler } from './schedule.js';
 import { slackRouter } from './slack.js';
 
 function requireEnv(name: string): string {
@@ -18,6 +19,9 @@ const config = {
   slackSigningSecret: requireEnv('SLACK_SIGNING_SECRET'),
   githubToken: requireEnv('GITHUB_TOKEN'),
   githubWebhookSecret: requireEnv('GITHUB_WEBHOOK_SECRET'),
+  sweepIntervalMinutes: Number(process.env.SWEEP_INTERVAL_MINUTES ?? 60),
+  githubRepos: (process.env.GITHUB_REPOS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+  slackDefaultChannel: process.env.SLACK_DEFAULT_CHANNEL || undefined,
 };
 requireEnv('ANTHROPIC_API_KEY'); // consumed by the Agent SDK directly
 
@@ -37,4 +41,11 @@ app.use(githubRouter({ webhookSecret: config.githubWebhookSecret, dispatch }));
 
 app.listen(config.port, () => {
   console.log(`micromanager listening on :${config.port}`);
+});
+
+startSweepScheduler({
+  intervalMinutes: config.sweepIntervalMinutes,
+  dispatch,
+  repos: config.githubRepos,
+  slackChannel: config.slackDefaultChannel,
 });
