@@ -58,6 +58,9 @@ export function githubRouter(opts: { webhookSecret: string; dispatch: Dispatch }
     res.sendStatus(200);
     const payload = JSON.parse(rawBody);
     if (payload.sender?.type === 'Bot') return; // never react to bots (incl. our own comments)
+    // The agent posts comments via a PAT, so its own comments arrive as a
+    // human sender and would bypass the Bot filter — drop the event type entirely.
+    if (req.header('x-github-event') === 'issue_comment') return;
     opts.dispatch({
       source: 'github',
       name: req.header('x-github-event') ?? 'unknown',

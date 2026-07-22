@@ -64,6 +64,19 @@ describe('githubRouter', () => {
     expect(dispatched).toEqual([]);
   });
 
+  it('does not dispatch issue_comment deliveries even from human senders (PAT echo guard)', async () => {
+    const dispatched: WebhookEvent[] = [];
+    const body = JSON.stringify({ action: 'created', sender: { login: 'hstanford', type: 'User' } });
+    await request(githubApp(dispatched))
+      .post('/webhooks/github')
+      .set('x-hub-signature-256', sign(body))
+      .set('x-github-event', 'issue_comment')
+      .set('content-type', 'application/json')
+      .send(body)
+      .expect(200);
+    expect(dispatched).toEqual([]);
+  });
+
   it('acks and dispatches a valid delivery', async () => {
     const dispatched: WebhookEvent[] = [];
     const body = JSON.stringify({ action: 'opened', number: 7 });
