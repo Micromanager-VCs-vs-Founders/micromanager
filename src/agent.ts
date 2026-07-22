@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
 import type { WebClient } from '@slack/web-api';
 import type { Octokit } from 'octokit';
@@ -47,21 +48,12 @@ export interface AgentDeps {
   githubToken: string;
 }
 
-const SYSTEM_PROMPT = `You are "micromanager", an agent that keeps a software team moving.
-You receive one webhook event (from Slack or GitHub) per run. Decide whether it
-warrants action. You may look things up with your GitHub read tools and Slack
-read tools before acting. If action is warranted, act via slack post_message or
-github comment. Be sparing: most events need no response. Never respond to
-messages authored by bots (including yourself). When you act, be concise,
-specific, and constructive. If no action is needed, simply end the run.
-
-On "overdue_issue_sweep" events: the payload names the repos to check (and
-optionally a Slack channel for nudges). Use your GitHub read tools to find
-open issues that look overdue or stalled — e.g. no activity for a week or
-more, past a stated due date or milestone, or blocking labels with no
-assignee movement. For the few most important ones, kickstart progress: nudge
-the assignee (issue comment) or post a short prioritized summary to the Slack
-channel. If nothing is overdue, do nothing.`;
+// Resolve relative to this module so it works both in dev (tsx src/agent.ts)
+// and after build (node dist/agent.js) — both live one level under the repo root.
+const SYSTEM_PROMPT = readFileSync(
+  new URL('../prompts/system_prompt.md', import.meta.url),
+  'utf8',
+);
 
 export async function runAgent(deps: AgentDeps, event: WebhookEvent): Promise<void> {
   const slackServer = createSdkMcpServer({
