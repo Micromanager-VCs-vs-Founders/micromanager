@@ -1,3 +1,9 @@
+import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
+import type { WebClient } from '@slack/web-api';
+import type { Octokit } from 'octokit';
+import { githubReadMcpServer, githubWriteTools } from './github.js';
+import { slackTools } from './slack.js';
+
 export interface WebhookEvent {
   source: 'slack' | 'github';
   name: string;
@@ -33,4 +39,62 @@ export function createDispatcher(
     queue.push(event);
     drain();
   };
+}
+
+export interface AgentDeps {
+  slack: WebClient;
+  octokit: Octokit;
+  githubToken: string;
+}
+
+const SYSTEM_PROMPT = `You are "micromanager", an agent that keeps a software team moving.
+You receive one webhook event (from Slack or GitHub) per run. Decide whether it
+warrants action. You may look things up with your GitHub read tools and Slack
+read tools before acting. If action is warranted, act via slack post_message or
+github comment. Be sparing: most events need no response. Never respond to
+messages authored by bots (including yourself). When you act, be concise,
+specific, and constructive. If no action is needed, simply end the run.`;
+
+export async function runAgent(deps: AgentDeps, event: WebhookEvent): Promise<void> {
+  const slackServer = createSdkMcpServer({
+    name: 'slack',
+    version: '1.0.0',
+    tools: slackTools(deps.slack),
+  });
+  const githubWriteServer = createSdkMcpServer({
+    name: 'github-write',
+    version: '1.0.0',
+    tools: githubWriteTools(deps.octokit),
+  });
+
+  const prompt = `Webhook event received.\nSource: ${event.source}\nEvent: ${event.name}\nPayload:\n${JSON.stringify(event.payload, null, 2)}`;
+
+  for await (const message of query({
+    prompt,
+    options: {
+      model: 'claude-sonnet-5',
+      systemPrompt: SYSTEM_PROMPT,
+      maxTurns: 10,
+      tools: [],
+      mcpServers: {
+        slack: slackServer,
+        'github-write': githubWriteServer,
+        github: githubReadMcpServer(deps.githubToken),
+      },
+      allowedTools: [
+        'mcp__slack__post_message',
+        'mcp__slack__read_thread',
+        'mcp__slack__channel_history',
+        'mcp__github-write__comment',
+        'mcp__github__*',
+      ],
+    },
+  })) {
+    if (message.type === 'result') {
+      console.log('agent run finished', {
+        event: `${event.source}:${event.name}`,
+        subtype: message.subtype,
+      });
+    }
+  }
 }
