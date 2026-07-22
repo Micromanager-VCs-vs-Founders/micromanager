@@ -945,3 +945,59 @@ With a populated `.env`: `npm run dev` in one terminal; `curl -s localhost:3000/
 git add src/server.ts scripts/send-test-webhook.ts
 git commit -m "feat: server assembly, healthz, and signed test-webhook sender"
 ```
+
+---
+
+### Task 8: Render deployment blueprint
+
+**Files:**
+- Create: `render.yaml`
+- Modify: `package.json` (add `start` script and `engines`)
+
+**Interfaces:**
+- Consumes: the built server (`npm run build` → `dist/server.js`).
+- Produces: a repo deployable on Render by "New → Blueprint → connect repo"; env vars prompted on first deploy.
+
+- [ ] **Step 1: Add start script and engines to package.json**
+
+```bash
+npm pkg set scripts.start="node dist/server.js" engines.node=">=20"
+```
+
+- [ ] **Step 2: Write render.yaml**
+
+```yaml
+services:
+  - type: web
+    name: micromanager
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
+```
+
+(Render injects `PORT`; `src/server.ts` already reads it.)
+
+- [ ] **Step 3: Verify the production path locally**
+
+Run: `npm ci && npm run build` — Expected: exit 0, `dist/server.js` exists.
+Run: with a populated `.env`, `node --env-file=.env dist/server.js` — Expected: logs `micromanager listening on :3000`; `curl -s localhost:3000/healthz` → `ok`. Without credentials: verify the build output exists and `node dist/server.js` fails ONLY with the missing-env-var error (proves the bundle itself loads).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add render.yaml package.json
+git commit -m "feat: Render deployment blueprint"
+```
