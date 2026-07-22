@@ -35,8 +35,15 @@ export function slackTools(client: WebClient) {
         thread_ts: z.string().optional().describe('Parent message ts to reply in-thread'),
       },
       async ({ channel, text, thread_ts }) => {
-        const res = await client.chat.postMessage({ channel, text, thread_ts });
-        return { content: [{ type: 'text', text: `posted (ts=${res.ts})` }] };
+        try {
+          const res = await client.chat.postMessage({ channel, text, thread_ts });
+          console.log('slack post_message ok', { channel, ts: res.ts });
+          return { content: [{ type: 'text', text: `posted (ts=${res.ts})` }] };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('slack post_message failed', { channel, error: msg });
+          return { content: [{ type: 'text', text: `post failed: ${msg}` }] };
+        }
       },
     ),
     tool(
@@ -74,13 +81,20 @@ export function slackRouter(opts: { signingSecret: string; dispatch: Dispatch })
     const rawBody = (req.body as Buffer).toString('utf8');
     const timestamp = req.header('x-slack-request-timestamp') ?? '';
     const signature = req.header('x-slack-signature') ?? '';
+    const retry = req.header('x-slack-retry-num');
     if (!verifySlackSignature(opts.signingSecret, timestamp, signature, rawBody)) {
+      console.warn('slack webhook rejected: bad signature', {
+        hasSignature: Boolean(signature),
+        timestamp,
+        retry,
+      });
       res.status(401).send('bad signature');
       return;
     }
 
     const payload = JSON.parse(rawBody);
     if (payload.type === 'url_verification') {
+      console.log('slack url_verification challenge answered');
       res.json({ challenge: payload.challenge });
       return;
     }
@@ -88,8 +102,18 @@ export function slackRouter(opts: { signingSecret: string; dispatch: Dispatch })
     res.sendStatus(200);
     if (payload.type === 'event_callback' && payload.event) {
       const event = payload.event;
-      if (event.bot_id || event.subtype === 'bot_message') return; // never react to bots (incl. ourselves)
+      if (event.bot_id || event.subtype === 'bot_message') {
+        console.log('slack event ignored (bot author)', { type: event.type });
+        return; // never react to bots (incl. ourselves)
+      }
+      console.log('slack event dispatched', {
+        type: event.type,
+        user: event.user,
+        channel: event.channel,
+      });
       opts.dispatch({ source: 'slack', name: event.type ?? 'unknown', payload: event });
+    } else {
+      console.log('slack webhook received (no dispatch)', { type: payload.type });
     }
   });
   return router;
