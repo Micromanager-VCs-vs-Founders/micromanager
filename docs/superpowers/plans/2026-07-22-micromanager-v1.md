@@ -789,6 +789,19 @@ describe('githubRouter', () => {
     expect(dispatched).toEqual([]);
   });
 
+  it('does not dispatch bot-sender deliveries (self-trigger guard)', async () => {
+    const dispatched: WebhookEvent[] = [];
+    const body = JSON.stringify({ action: 'created', sender: { login: 'micromanager[bot]', type: 'Bot' } });
+    await request(githubApp(dispatched))
+      .post('/webhooks/github')
+      .set('x-hub-signature-256', sign(body))
+      .set('x-github-event', 'issue_comment')
+      .set('content-type', 'application/json')
+      .send(body)
+      .expect(200);
+    expect(dispatched).toEqual([]);
+  });
+
   it('acks and dispatches a valid delivery', async () => {
     const dispatched: WebhookEvent[] = [];
     const body = JSON.stringify({ action: 'opened', number: 7 });
@@ -831,10 +844,12 @@ export function githubRouter(opts: { webhookSecret: string; dispatch: Dispatch }
     }
 
     res.sendStatus(200);
+    const payload = JSON.parse(rawBody);
+    if (payload.sender?.type === 'Bot') return; // never react to bots (incl. our own comments)
     opts.dispatch({
       source: 'github',
       name: req.header('x-github-event') ?? 'unknown',
-      payload: JSON.parse(rawBody),
+      payload,
     });
   });
   return router;
