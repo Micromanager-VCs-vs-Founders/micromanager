@@ -12,7 +12,7 @@
 
 - Spec: `docs/superpowers/specs/2026-07-22-micromanager-design.md` — read it before starting any task.
 - ESM project (`"type": "module"`, tsconfig `module: "NodeNext"`): every relative import MUST end in `.js` (e.g. `import { x } from './agent.js'`) even though the source file is `.ts`.
-- `zod` must be v3 (`zod@^3`) — the Agent SDK's `tool()` expects zod v3 schemas.
+- `zod` must be v4 (`zod@^4`) — the Agent SDK (0.3.x) peer-depends on `zod: ^4.0.0`.
 - Agent model: `claude-sonnet-5`. `maxTurns: 10`. Built-in tools stripped with `tools: []`.
 - Concurrency cap: 3 concurrent agent runs, excess events FIFO-queued in memory.
 - Webhook routes must operate on the RAW request body (Buffer) for signature verification; JSON-parse only after verification succeeds.
@@ -37,7 +37,7 @@
 npm init -y
 npm pkg set type=module
 npm pkg set scripts.dev="tsx src/server.ts" scripts.build="tsc" scripts.typecheck="tsc --noEmit" scripts.test="vitest run"
-npm install express @anthropic-ai/claude-agent-sdk @slack/web-api octokit zod@^3 dotenv
+npm install express @anthropic-ai/claude-agent-sdk @slack/web-api octokit zod@^4 dotenv
 npm install -D typescript tsx vitest supertest @types/supertest @types/express @types/node
 ```
 
